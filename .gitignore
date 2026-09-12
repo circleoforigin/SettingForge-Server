@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+data/releases/*
+!data/releases/.gitkeep
+
+data/feedback/*
+!data/feedback/.gitkeep
+
+.env
+*.log
+
+data/updates/
+data/releases/
