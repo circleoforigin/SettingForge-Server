@@ -61,6 +61,84 @@ function getContentType(
   }
 }
 
+type ByteRange = {
+  start: number
+  end: number
+}
+
+function parseByteRange(
+  rangeHeader: string,
+  fileSize: number,
+): ByteRange | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(
+    rangeHeader.trim(),
+  )
+
+  if (!match) {
+    return null
+  }
+
+  const startText = match[1]
+  const endText = match[2]
+
+  if (!startText && !endText) {
+    return null
+  }
+
+  let start: number
+  let end: number
+
+  if (!startText) {
+    const suffixLength = Number(endText)
+
+    if (
+      !Number.isSafeInteger(suffixLength) ||
+      suffixLength <= 0
+    ) {
+      return null
+    }
+
+    start = Math.max(
+      fileSize - suffixLength,
+      0,
+    )
+    end = fileSize - 1
+  } else {
+    start = Number(startText)
+
+    if (
+      !Number.isSafeInteger(start) ||
+      start < 0 ||
+      start >= fileSize
+    ) {
+      return null
+    }
+
+    if (endText) {
+      end = Number(endText)
+
+      if (
+        !Number.isSafeInteger(end) ||
+        end < start
+      ) {
+        return null
+      }
+
+      end = Math.min(
+        end,
+        fileSize - 1,
+      )
+    } else {
+      end = fileSize - 1
+    }
+  }
+
+  return {
+    start,
+    end,
+  }
+}
+
 app.get('/health', async () => {
   return {
     status: 'ok',
@@ -141,13 +219,64 @@ app.get<{
     )
 
     reply.header(
-      'Content-Length',
-      fileInfo.size,
+      'Cache-Control',
+      'no-store',
     )
 
     reply.header(
-      'Cache-Control',
-      'no-store',
+      'Accept-Ranges',
+      'bytes',
+    )
+
+    const rangeHeader =
+      request.headers.range
+
+    if (rangeHeader) {
+      const range = parseByteRange(
+        rangeHeader,
+        fileInfo.size,
+      )
+
+      if (!range) {
+        reply.header(
+          'Content-Range',
+          `bytes */${fileInfo.size}`,
+        )
+
+        return reply
+          .code(416)
+          .send()
+      }
+
+      const contentLength =
+        range.end - range.start + 1
+
+      reply.header(
+        'Content-Range',
+        `bytes ${range.start}-${range.end}/${fileInfo.size}`,
+      )
+
+      reply.header(
+        'Content-Length',
+        contentLength,
+      )
+
+      return reply
+        .code(206)
+        .send(
+          createReadStream(
+            filePath,
+            {
+              start: range.start,
+              end: range.end,
+            },
+          ),
+        )
+    }
+
+    reply.header(
+      'Content-Length',
+      fileInfo.size,
     )
 
     return reply.send(
