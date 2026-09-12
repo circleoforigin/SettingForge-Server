@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import { createReadStream, existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 const app = Fastify({
@@ -66,12 +67,12 @@ type ByteRange = {
   end: number
 }
 
-function parseByteRange(
-  rangeHeader: string,
+function parseSingleByteRange(
+  rangeText: string,
   fileSize: number,
 ): ByteRange | null {
-  const match = /^bytes=(\d*)-(\d*)$/.exec(
-    rangeHeader.trim(),
+  const match = /^(\d*)-(\d*)$/.exec(
+    rangeText.trim(),
   )
 
   if (!match) {
@@ -137,6 +138,81 @@ function parseByteRange(
     start,
     end,
   }
+}
+
+function parseByteRanges(
+  rangeHeader: string,
+  fileSize: number,
+): ByteRange[] | null {
+  const match = /^bytes=(.+)$/i.exec(
+    rangeHeader.trim(),
+  )
+
+  if (!match) {
+    return null
+  }
+
+  const ranges = match[1]
+    .split(',')
+    .map((rangeText) =>
+      parseSingleByteRange(
+        rangeText,
+        fileSize,
+      ),
+    )
+
+  if (
+    ranges.length === 0 ||
+    ranges.some((range) => range === null)
+  ) {
+    return null
+  }
+
+  return ranges as ByteRange[]
+}
+
+function createMultipartRangeStream(
+  filePath: string,
+  ranges: ByteRange[],
+  fileSize: number,
+  contentType: string,
+  boundary: string,
+): Readable {
+  async function* generate() {
+    for (const range of ranges) {
+      yield Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Type: ${contentType}\r\n` +
+        `Content-Range: bytes ${range.start}-${range.end}/${fileSize}\r\n` +
+        `\r\n`,
+        'utf8',
+      )
+
+      const fileStream = createReadStream(
+        filePath,
+        {
+          start: range.start,
+          end: range.end,
+        },
+      )
+
+      for await (const chunk of fileStream) {
+        yield chunk
+      }
+
+      yield Buffer.from(
+        '\r\n',
+        'utf8',
+      )
+    }
+
+    yield Buffer.from(
+      `--${boundary}--\r\n`,
+      'utf8',
+    )
+  }
+
+  return Readable.from(generate())
 }
 
 app.get('/health', async () => {
@@ -213,10 +289,8 @@ app.get<{
         })
     }
 
-    reply.header(
-      'Content-Type',
-      getContentType(fileName),
-    )
+    const contentType =
+      getContentType(fileName)
 
     reply.header(
       'Cache-Control',
@@ -232,12 +306,12 @@ app.get<{
       request.headers.range
 
     if (rangeHeader) {
-      const range = parseByteRange(
+      const ranges = parseByteRanges(
         rangeHeader,
         fileInfo.size,
       )
 
-      if (!range) {
+      if (!ranges) {
         reply.header(
           'Content-Range',
           `bytes */${fileInfo.size}`,
@@ -248,31 +322,64 @@ app.get<{
           .send()
       }
 
-      const contentLength =
-        range.end - range.start + 1
+      if (ranges.length === 1) {
+        const range = ranges[0]
+        const contentLength =
+          range.end - range.start + 1
+
+        reply.header(
+          'Content-Type',
+          contentType,
+        )
+
+        reply.header(
+          'Content-Range',
+          `bytes ${range.start}-${range.end}/${fileInfo.size}`,
+        )
+
+        reply.header(
+          'Content-Length',
+          contentLength,
+        )
+
+        return reply
+          .code(206)
+          .send(
+            createReadStream(
+              filePath,
+              {
+                start: range.start,
+                end: range.end,
+              },
+            ),
+          )
+      }
+
+      const boundary =
+        `settingforge-${Date.now().toString(16)}`
 
       reply.header(
-        'Content-Range',
-        `bytes ${range.start}-${range.end}/${fileInfo.size}`,
-      )
-
-      reply.header(
-        'Content-Length',
-        contentLength,
+        'Content-Type',
+        `multipart/byteranges; boundary=${boundary}`,
       )
 
       return reply
         .code(206)
         .send(
-          createReadStream(
+          createMultipartRangeStream(
             filePath,
-            {
-              start: range.start,
-              end: range.end,
-            },
+            ranges,
+            fileInfo.size,
+            contentType,
+            boundary,
           ),
         )
     }
+
+    reply.header(
+      'Content-Type',
+      contentType,
+    )
 
     reply.header(
       'Content-Length',
