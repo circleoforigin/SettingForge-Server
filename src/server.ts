@@ -176,13 +176,5 @@ async function start() {
   }
 }
 
-app.get('/health', async() => {
-  return {
-    status: 'ok',
-    service: 'SettingForge Server',
-    deploymentTest: 'auto-update-check',
-    timestamp: new Date().toISOString(),
-  }
-})
 
 void start()
