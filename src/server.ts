@@ -8,13 +8,17 @@ import {
   getTesterDatabasePath,
   TesterRepository,
 } from './data/TesterRepository.js'
+import { registerActivationRoutes } from './routes/ActivationRoutes.js'
+import { TesterAuthorizationService } from './services/TesterAuthorizationService.js'
 
 const app = Fastify({
   logger: true,
 })
 
 const testerRepository = new TesterRepository(getTesterDatabasePath())
+const authorizationService = new TesterAuthorizationService(testerRepository)
 app.addHook('onClose', async () => testerRepository.close())
+await registerActivationRoutes(app, { authorizationService })
 
 const host =
   process.env.SETTINGFORGE_SERVER_HOST ??

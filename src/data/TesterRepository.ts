@@ -196,6 +196,69 @@ export class TesterRepository {
     return row ? testerFromRow(row) : null
   }
 
+  getTesterByEmail(email: string): Tester | null {
+    const normalizedEmail = email.trim().toLowerCase()
+    const row = this.database.prepare(`
+      SELECT id, email, status, max_devices, created_at, updated_at
+      FROM testers WHERE email = ?
+    `).get(normalizedEmail) as unknown as TesterRow | undefined
+    return row ? testerFromRow(row) : null
+  }
+
+  updateTesterStatus(id: string, status: TesterStatus): Tester | null {
+    const now = new Date().toISOString()
+    this.database.prepare(`
+      UPDATE testers SET status = ?, updated_at = ? WHERE id = ?
+    `).run(status, now, id)
+    return this.getTester(id)
+  }
+
+  getDeviceByDeviceId(deviceId: string): TesterDevice | null {
+    const row = this.database.prepare(`
+      SELECT id, user_id, device_id, device_name,
+        activated_at, last_seen_at, revoked_at
+      FROM devices WHERE device_id = ?
+    `).get(deviceId) as unknown as DeviceRow | undefined
+    return row ? deviceFromRow(row) : null
+  }
+
+  countActiveDevices(userId: string): number {
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM devices
+      WHERE user_id = ? AND revoked_at IS NULL
+    `).get(userId) as unknown as { count: number }
+    return row.count
+  }
+
+  updateDeviceLastSeen(deviceId: string): TesterDevice | null {
+    const now = new Date().toISOString()
+    this.database.prepare(`
+      UPDATE devices SET last_seen_at = ? WHERE device_id = ?
+    `).run(now, deviceId)
+    return this.getDeviceByDeviceId(deviceId)
+  }
+
+  revokeDevice(deviceId: string): TesterDevice | null {
+    const now = new Date().toISOString()
+    this.database.prepare(`
+      UPDATE devices SET revoked_at = ? WHERE device_id = ?
+    `).run(now, deviceId)
+    return this.getDeviceByDeviceId(deviceId)
+  }
+
+  transaction<T>(operation: () => T): T {
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = operation()
+      this.database.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   listTesters(): TesterWithDevices[] {
     const testers = this.database.prepare(`
       SELECT id, email, status, max_devices, created_at, updated_at
