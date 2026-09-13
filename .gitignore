@@ -12,3 +12,6 @@ data/feedback/*
 
 data/updates/
 data/releases/
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal

@@ -8,7 +8,10 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "build": "tsc",
-    "start:production": "node dist/server.js"
+    "start:production": "node dist/server.js",
+    "test": "tsx --test src/**/*.test.ts",
+    "testers:add": "tsx src/admin/testers.ts add",
+    "testers:list": "tsx src/admin/testers.ts list"
   },
   "dependencies": {
     "fastify": "^5.0.0"

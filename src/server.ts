@@ -4,10 +4,17 @@ import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
+import {
+  getTesterDatabasePath,
+  TesterRepository,
+} from './data/TesterRepository.js'
 
 const app = Fastify({
   logger: true,
 })
+
+const testerRepository = new TesterRepository(getTesterDatabasePath())
+app.addHook('onClose', async () => testerRepository.close())
 
 const host =
   process.env.SETTINGFORGE_SERVER_HOST ??
